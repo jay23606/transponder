@@ -4,6 +4,10 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+### Changed
+
+- The usage headers and the `RateLimit-Policy` and `RateLimit` headers are written with `strconv` instead of `fmt`, and under their canonical names, saving up to 9 allocations per call. The headers read the same.
+
 ## [0.3.2] - 2026-11-22
 
 ### Added
