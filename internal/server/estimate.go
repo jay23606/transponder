@@ -2,16 +2,12 @@ package server
 
 import (
 	"encoding/json"
-	"regexp"
 	"strconv"
 	"unicode/utf16"
 	"unicode/utf8"
 
 	"github.com/raven-clown/transponder/internal/tokens"
 )
-
-// base64DataURI matches an inline image, audio or file payload, which is not text for the model.
-var base64DataURI = regexp.MustCompile(`^data:[a-z]+/[a-zA-Z0-9.+-]+;base64,`)
 
 // estimateInput counts every key and string in a request body, and every number in an array,
 // which is how token-array inputs arrive. Tool schemas, tool arguments and descriptions all reach
@@ -184,6 +180,9 @@ func (s *inputScanner) object() scanned {
 		v.t.add(field)
 		switch string(key) {
 		case "type":
+			// A repeated key keeps its last value, as encoding/json does, even one that is
+			// not a string.
+			v.typ = nil
 			if val.kind == 's' {
 				v.typ = s.text(val.lo, val.hi, val.esc)
 			}
@@ -286,10 +285,15 @@ func (s *inputScanner) str() (lo, hi int, esc bool, ascii, other int64) {
 	}
 }
 
-// text returns a string's decoded content. A string without escapes is a slice of the body;
-// only one with escapes is decoded, which allocates, and keys and types rarely have any.
+// maxEscapedName is the longest written form of a key or type worth decoding: the names compared
+// against are at most 11 characters, and an escape writes one in at most 6 bytes.
+const maxEscapedName = 128
+
+// text returns a key's or type's decoded content. A string without escapes is a slice of the
+// body; only a short one with escapes is decoded, which allocates. A longer one comes back as
+// written: it still holds a backslash, so it equals none of the names it is compared with.
 func (s *inputScanner) text(lo, hi int, esc bool) []byte {
-	if !esc {
+	if !esc || hi-lo > maxEscapedName {
 		return s.b[lo:hi]
 	}
 	var out string
@@ -297,9 +301,91 @@ func (s *inputScanner) text(lo, hi int, esc bool) []byte {
 	return []byte(out)
 }
 
-// dataURI reports whether a string value is an inline base64 payload.
+// dataURI reports whether a string value is an inline base64 payload, as the anchored pattern
+// ^data:[a-z]+/[a-zA-Z0-9.+-]+;base64, would on the decoded string. It reads one character at a
+// time and stops at the first that cannot match, so it neither decodes nor copies the string.
 func (s *inputScanner) dataURI(v scanned) bool {
-	return base64DataURI.Match(s.text(v.lo, v.hi, v.esc))
+	raw, i := s.b[v.lo:v.hi], 0
+	next := func() rune {
+		if i >= len(raw) {
+			return -1
+		}
+		r, n := jsonRune(raw[i:])
+		i += n
+		return r
+	}
+	for _, want := range "data:" {
+		if next() != want {
+			return false
+		}
+	}
+	n := 0
+	for r := next(); r != '/'; r = next() {
+		if r < 'a' || r > 'z' {
+			return false
+		}
+		n++
+	}
+	if n == 0 {
+		return false
+	}
+	n = 0
+	for r := next(); r != ';'; r = next() {
+		if !subtypeChar(r) {
+			return false
+		}
+		n++
+	}
+	if n == 0 {
+		return false
+	}
+	for _, want := range "base64," {
+		if next() != want {
+			return false
+		}
+	}
+	return true
+}
+
+// subtypeChar reports whether r may appear in a data URI's media subtype, as [a-zA-Z0-9.+-].
+func subtypeChar(r rune) bool {
+	switch {
+	case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		return true
+	}
+	return r == '.' || r == '+' || r == '-'
+}
+
+// jsonRune decodes the first character of a JSON string's content and says how many bytes it
+// took, as encoding/json decodes it: an invalid UTF-8 byte or an unpaired surrogate is U+FFFD.
+func jsonRune(b []byte) (rune, int) {
+	if b[0] != '\\' {
+		return utf8.DecodeRune(b)
+	}
+	switch b[1] {
+	case 'u':
+		r := hex4(b[2:])
+		if !utf16.IsSurrogate(r) {
+			return r, 6
+		}
+		if len(b) >= 12 && b[6] == '\\' && b[7] == 'u' {
+			if pair := utf16.DecodeRune(r, hex4(b[8:])); pair != utf8.RuneError {
+				return pair, 12
+			}
+		}
+		return utf8.RuneError, 6
+	case 'b':
+		return '\b', 2
+	case 'f':
+		return '\f', 2
+	case 'n':
+		return '\n', 2
+	case 'r':
+		return '\r', 2
+	case 't':
+		return '\t', 2
+	}
+	return rune(b[1]), 2
 }
 
 func hex4(b []byte) rune {
