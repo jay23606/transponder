@@ -91,7 +91,7 @@ func (a *Adapter) Chat(ctx context.Context, req *schema.ChatRequest) (*schema.Ch
 		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
-	out, err := provider.ReadBody(io.LimitReader(resp.Body, maxResponseBody), resp.ContentLength)
+	out, err := provider.ReadBody(io.LimitReader(resp.Body, maxResponseBody), resp.ContentLength, maxResponseBody)
 	if err != nil {
 		return nil, &provider.Error{Provider: a.name, Retryable: true, Err: err}
 	}

@@ -6,7 +6,7 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ### Changed
 
-- A request body, and a provider's answer read whole, is read into a buffer sized from its `Content-Length` instead of one that starts small and is copied each time it grows. Reading a 50 KB body takes 9 µs instead of 24 µs and 57 KB of memory instead of 130 KB; an 8 MB image request takes 9.5 MB instead of 17 MB. A caller's declared length reserves at most 1 MiB until that much has arrived, so a large `Content-Length` with no body behind it holds little memory.
+- A request body, and a provider's answer read whole, is read into a buffer sized from its `Content-Length` instead of one that starts small and is copied each time it grows. Reading a 50 KB body takes 11 µs instead of 24 µs and 57 KB of memory instead of 130 KB, in 2 allocations instead of 17; an 8 MB image request allocates 14 MB instead of 17 MB, in 6 allocations instead of 30. The declared length is never trusted past the most the gateway reads (20 MiB from a caller, 64 MiB from a provider), the first buffer is at most 64 KiB, and the buffer grows to at most four times what has arrived, so a sender that declares more than it sends holds little memory.
 
 ## [0.3.2] - 2026-11-22
 

@@ -17,12 +17,16 @@ const maxErrorBody = 1 << 20
 
 // presizeLimit bounds the buffer ReadBody makes before any byte arrives, so a sender that
 // declares a large body and sends nothing holds little memory.
-const presizeLimit = 1 << 20
+const presizeLimit = 64 << 10
 
-// ReadBody reads r to its end. size is the length the sender declared, or -1 when unknown: a
-// buffer that large, up to 1 MiB, is made at once, so a body is not copied each time
-// io.ReadAll would grow its buffer.
-func ReadBody(r io.Reader, size int64) ([]byte, error) {
+// ReadBody reads r to its end. size is the length the sender declared, or -1 when unknown, and
+// limit the most r can return, such as the n of its io.LimitReader; a declared size is never
+// trusted past it. The buffer starts at the declared size, up to 64 KiB, and each time it fills
+// grows to at most four times what has arrived, toward the declared size. A body is then copied
+// a few times instead of each time io.ReadAll grows its buffer, and a sender that declares more
+// than it sends holds at most about four times what it sent.
+func ReadBody(r io.Reader, size, limit int64) ([]byte, error) {
+	size = min(size, limit)
 	if size <= 0 {
 		return io.ReadAll(r)
 	}
@@ -32,19 +36,20 @@ func ReadBody(r io.Reader, size int64) ([]byte, error) {
 		n, err := r.Read(b[len(b):cap(b)])
 		b = b[:len(b)+n]
 		if err != nil {
-			if errors.Is(err, io.EOF) {
+			// A Reader returns io.EOF itself at the end; a wrapped one is an error, as in io.ReadAll.
+			if err == io.EOF { //nolint:errorlint // the io.Reader contract
 				err = nil
 			}
 			return b, err
 		}
 		if len(b) == cap(b) {
-			// Past the first MiB the sender has shown it is sending, so the buffer goes
-			// straight to the declared size; a body longer than declared doubles it.
-			want := 2 * cap(b)
-			if int(size)+1 > cap(b) {
-				want = int(size) + 1
+			have := int64(cap(b))
+			want := min(4*have, size+1)
+			if want <= have {
+				// Longer than declared: double, as io.ReadAll would.
+				want = 2 * have
 			}
-			b = slices.Grow(b, want-len(b))
+			b = slices.Grow(b, int(want)-len(b))
 		}
 	}
 }
