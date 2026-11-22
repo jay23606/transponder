@@ -4,6 +4,10 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+### Changed
+
+- An OpenAI request forwarded to an OpenAI-dialect target is no longer decoded into a map and encoded again: `model`, and `stream_options` when usage is asked for, are written first and every other member is copied as the caller sent it, in the caller's order and spacing. Reading the model and stream fields scans the body the same way. Peeking and rewriting a chat request takes 3.1 µs instead of 8.5 µs and 7 allocations instead of 45, and a streamed chat call through the gateway is 13% faster. A body that repeats a top-level key is still rewritten the old way, so the provider gets each key once.
+
 ## [0.3.2] - 2026-11-22
 
 ### Added
