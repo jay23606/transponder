@@ -4,14 +4,71 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/raven-clown/transponder/internal/schema"
 )
+
+func TestReadBody(t *testing.T) {
+	big := strings.Repeat("x", presizeLimit+5000)
+	for _, tt := range []struct {
+		name string
+		body string
+		size int64
+	}{
+		{"declared exactly", "hello", 5},
+		{"unknown length", "hello", -1},
+		{"empty", "", 0},
+		{"declared too small", "hello world", 3},
+		{"declared too large", "hello", 100},
+		{"over the presize limit", big, int64(len(big))},
+		{"longer than declared, past the presize limit", big, 10},
+		{"declared past the presize limit, shorter", "hello", int64(len(big))},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ReadBody(strings.NewReader(tt.body), tt.size)
+			if err != nil || string(got) != tt.body {
+				t.Fatalf("got %d bytes, err %v; want %d bytes", len(got), err, len(tt.body))
+			}
+		})
+	}
+	t.Run("presized buffer is bounded", func(t *testing.T) {
+		got, err := ReadBody(strings.NewReader("hi"), 1<<30)
+		if err != nil || string(got) != "hi" || cap(got) > presizeLimit+1024 {
+			t.Fatalf("got %q, cap %d, err %v", got, cap(got), err)
+		}
+	})
+	t.Run("a read error comes back", func(t *testing.T) {
+		boom := errors.New("boom")
+		if _, err := ReadBody(io.MultiReader(strings.NewReader("ab"), iotest.ErrReader(boom)), 10); !errors.Is(err, boom) {
+			t.Fatalf("err = %v, want boom", err)
+		}
+	})
+}
+
+func BenchmarkReadBody(b *testing.B) {
+	for _, size := range []int{2 << 10, 50 << 10, 1 << 20, 8 << 20} {
+		body := strings.Repeat("x", size)
+		b.Run(fmt.Sprintf("%dKiB/sized", size>>10), func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				_, _ = ReadBody(strings.NewReader(body), int64(size))
+			}
+		})
+		b.Run(fmt.Sprintf("%dKiB/readall", size>>10), func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				_, _ = io.ReadAll(strings.NewReader(body))
+			}
+		})
+	}
+}
 
 func TestRetryableStatus(t *testing.T) {
 	for status, want := range map[int]bool{

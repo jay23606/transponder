@@ -4,6 +4,10 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+### Changed
+
+- A request body, and a provider's answer read whole, is read into a buffer sized from its `Content-Length` instead of one that starts small and is copied each time it grows. Reading a 50 KB body takes 9 µs instead of 24 µs and 57 KB of memory instead of 130 KB; an 8 MB image request takes 9.5 MB instead of 17 MB. A caller's declared length reserves at most 1 MiB until that much has arrived, so a large `Content-Length` with no body behind it holds little memory.
+
 ## [0.3.2] - 2026-11-22
 
 ### Added

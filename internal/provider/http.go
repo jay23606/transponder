@@ -7,12 +7,47 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 )
 
 const maxErrorBody = 1 << 20
+
+// presizeLimit bounds the buffer ReadBody makes before any byte arrives, so a sender that
+// declares a large body and sends nothing holds little memory.
+const presizeLimit = 1 << 20
+
+// ReadBody reads r to its end. size is the length the sender declared, or -1 when unknown: a
+// buffer that large, up to 1 MiB, is made at once, so a body is not copied each time
+// io.ReadAll would grow its buffer.
+func ReadBody(r io.Reader, size int64) ([]byte, error) {
+	if size <= 0 {
+		return io.ReadAll(r)
+	}
+	// One byte more than declared leaves room for the read that finds the end.
+	b := make([]byte, 0, min(size, presizeLimit)+1)
+	for {
+		n, err := r.Read(b[len(b):cap(b)])
+		b = b[:len(b)+n]
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				err = nil
+			}
+			return b, err
+		}
+		if len(b) == cap(b) {
+			// Past the first MiB the sender has shown it is sending, so the buffer goes
+			// straight to the declared size; a body longer than declared doubles it.
+			want := 2 * cap(b)
+			if int(size)+1 > cap(b) {
+				want = int(size) + 1
+			}
+			b = slices.Grow(b, want-len(b))
+		}
+	}
+}
 
 // TraceHeaders are copied from the caller's request to every upstream call. They are in Go's
 // canonical form, so Get and Set do not copy the key on every call.
