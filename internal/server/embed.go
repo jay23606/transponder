@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 
@@ -24,7 +25,7 @@ func (g *gateway) embeddings(w http.ResponseWriter, r *http.Request) {
 	if !g.resolve(c, peek.Model) {
 		return
 	}
-	if !g.admit(c, limits.Estimate{InputTokens: estimateInput(c.body), NoOutput: true}) {
+	if !g.admit(c, func() limits.Estimate { return limits.Estimate{InputTokens: estimateInput(c.body), NoOutput: true} }) {
 		return
 	}
 	g.run(c, func() error {
@@ -51,7 +52,7 @@ func (g *gateway) embedNative(c *call, n provider.Native) error {
 	}
 	u, ok := openai.ParseUsage(out)
 	if !ok {
-		u = schema.Usage{InputTokens: estimateTokens(embedText(c.body))}
+		u = schema.Usage{InputTokens: estimateEmbedInput(c.body)}
 		c.rec.Estimated = true
 	}
 	cost := g.price(c.r.Context(), c, u)
@@ -61,7 +62,7 @@ func (g *gateway) embedNative(c *call, n provider.Native) error {
 	setUsageHeaders(c.w.Header(), u, cost)
 	c.w.Header().Set("Content-Type", "application/json")
 	c.w.WriteHeader(resp.StatusCode)
-	_, _ = c.w.Write(out)
+	_, _ = c.w.Write(out) //nolint:gosec // the provider's JSON, served as application/json
 	return nil
 }
 
@@ -89,6 +90,35 @@ func (g *gateway) embedCanonical(c *call) error {
 	c.w.WriteHeader(http.StatusOK)
 	_, _ = c.w.Write(body) //nolint:gosec // JSON we encoded, served as application/json
 	return nil
+}
+
+// estimateEmbedInput counts embeddings input when the provider reports no usage.
+// Text keeps the character estimate. A list of token ids, or a list of such lists,
+// counts one per id: ParseEmbedRequest only accepts text, so id input used to be
+// estimated as no tokens and the call cost nothing.
+func estimateEmbedInput(body []byte) int64 {
+	if text := embedText(body); text != "" {
+		return estimateTokens(text)
+	}
+	var w struct {
+		Input json.RawMessage `json:"input"`
+	}
+	if json.Unmarshal(body, &w) != nil {
+		return 0
+	}
+	var ids []int
+	if json.Unmarshal(w.Input, &ids) == nil {
+		return int64(len(ids))
+	}
+	var lists [][]int
+	if json.Unmarshal(w.Input, &lists) != nil {
+		return 0
+	}
+	var n int64
+	for _, row := range lists {
+		n += int64(len(row))
+	}
+	return n
 }
 
 func embedText(body []byte) string {
