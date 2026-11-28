@@ -255,10 +255,10 @@ func serve(ctx context.Context, cfg *config.Bootstrap, ln net.Listener, stdout, 
 		return err
 	case <-ctx.Done():
 	}
-	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
+	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cfg.Settings.ShutdownTimeout)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		logger.Warn("open requests did not finish in time, ending them", "timeout", shutdownTimeout.String())
+		logger.Warn("open requests did not finish in time, ending them", "timeout", cfg.Settings.ShutdownTimeout.String())
 		endRequests()
 		inflight.Wait()
 		_ = srv.Close()
