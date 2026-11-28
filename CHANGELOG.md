@@ -4,6 +4,10 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [Unreleased]
 
+### Changed
+
+- A config with two budgets for one subject and period, or two profile bindings for one subject, no longer loads, and an admin API write that would make one is refused. The limiter applied both budgets or took the first binding, so the second line did nothing and `--config-test` said `config ok`. The error names both entries, and a binding from `profiles_file` counts too (#171).
+
 ### Fixed
 
 - An embeddings request whose `input` is a list of token ids, or a list of such lists, counts as one token per id when the provider sends no usage. It used to be estimated as zero tokens, so the call cost nothing.

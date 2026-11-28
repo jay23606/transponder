@@ -422,6 +422,29 @@ func (c *Bootstrap) validate() error {
 	return nil
 }
 
+// checkDuplicateLimits refuses a second budget for the same subject and period, and a second
+// profile binding for the same subject: the limiter would apply both budgets or take the first
+// binding, so the second line would silently do nothing.
+func checkDuplicateLimits(budgets []BudgetConfig, bindings []BindingConfig) error {
+	type budgetKey struct{ subject, period string }
+	firstBudget := map[budgetKey]int{}
+	for i, b := range budgets {
+		k := budgetKey{b.Subject, b.Period}
+		if j, ok := firstBudget[k]; ok {
+			return fmt.Errorf("config: budgets[%d] repeats the %s budget of %s in budgets[%d]; keep one", i, b.Period, b.Subject, j)
+		}
+		firstBudget[k] = i
+	}
+	firstBinding := map[string]int{}
+	for i, b := range bindings {
+		if j, ok := firstBinding[b.Subject]; ok {
+			return fmt.Errorf("config: profile_bindings[%d] gives %s a second profile, profile_bindings[%d] already gives it one; keep one", i, b.Subject, j)
+		}
+		firstBinding[b.Subject] = i
+	}
+	return nil
+}
+
 // checkRoutesReachable refuses a file route that no call can reach: routes are tried in order
 // and the first match wins, so a route with the same match as an earlier one, or any route
 // after "*", never gets a call. Routes made through the admin API keep their own positions,
@@ -581,7 +604,7 @@ func (c *Bootstrap) ValidateRuntime() error {
 			}
 		}
 	}
-	return nil
+	return checkDuplicateLimits(c.Budgets, c.ProfileBindings)
 }
 
 // SharedLimits reports whether limit counters are kept in Postgres, shared by every replica.
